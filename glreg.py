@@ -262,8 +262,8 @@ def loads(s):
     return _load(xml.etree.ElementTree.fromstring(s))
 
 
-def _default_filter_symbol(type, name):
-    assert type(type) is str
+def _default_filter_symbol(t, name):
+    assert type(t) is str
     assert type(name) is str
     return True
 
