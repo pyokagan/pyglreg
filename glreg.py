@@ -293,7 +293,7 @@ def import_type(dest, src, name, api=None, filter_symbol=None):
         if not filter_symbol('type', x):
             continue
         import_type(dest, src, x, api, filter_symbol)
-    dest.types[name] = type
+    dest.types[(type.name, type.api)] = type
 
 
 def import_command(dest, src, name, api=None, filter_symbol=None):
