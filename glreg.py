@@ -83,15 +83,15 @@ class API(object):
     def __init__(self):
         self.name = None  # Optional name
         self.types = collections.OrderedDict()
-        self.enums = {}
-        self.commands = {}
+        self.enums = collections.OrderedDict()
+        self.commands = collections.OrderedDict()
 
 
 class Registry(API):
     def __init__(self):
         super(Registry, self).__init__()
-        self.features = {}
-        self.extensions = {}
+        self.features = collections.OrderedDict()
+        self.extensions = collections.OrderedDict()
 
 
 def _escape_tpl_str(x):
@@ -151,7 +151,7 @@ def _load_types(root):
 
 def _load_enums(root):
     """Returns {name: Enum}"""
-    out = {}
+    out = collections.OrderedDict()
     for elem in root.findall('enums/enum'):
         enum = Enum()
         enum.name = elem.attrib['name']
@@ -192,7 +192,7 @@ def _load_commands(root):
             if x.tail:
                 out.append(_escape_tpl_str(x.tail) if template else x.tail)
         return ''.join(out)
-    out = {}
+    out = collections.OrderedDict()
     for elem in root.findall('commands/command'):
         cmd = Command()
         cmd.name = elem.get('name') or elem.find('proto/name').text
@@ -227,7 +227,7 @@ def _load_remove(elem):
 
 def _load_features(root):
     """Returns {name: Feature}"""
-    out = {}
+    out = collections.OrderedDict()
     for elem in root.findall('feature'):
         ft = Feature()
         ft.name = elem.attrib['name']
@@ -242,7 +242,7 @@ def _load_features(root):
 
 def _load_extensions(root):
     """Returns {name: Extension}"""
-    out = {}
+    out = collections.OrderedDict()
     for elem in root.findall('extensions/extension'):
         ext = Extension()
         ext.name = elem.attrib['name']
