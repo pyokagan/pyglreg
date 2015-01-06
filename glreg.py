@@ -529,8 +529,9 @@ def generate_api(reg, features=None, extensions=None, profile=None,
     return out_apis
 
 
-def main(args, prog=None):
+def main(args=None, prog=None):
     """Generates a C header file"""
+    args = args if args is not None else sys.argv[1:]
     prog = prog if prog is not None else sys.argv[0]
     # Prevent broken pipe exception from being raised.
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
