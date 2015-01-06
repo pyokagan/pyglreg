@@ -103,10 +103,9 @@ def _escape_tpl_str(x):
     return re.sub('[{}]', repl_f, x)
 
 
-def _load(tree):
+def _load(root):
     """Load from an xml.etree.ElementTree"""
     out = Registry()
-    root = tree.getroot()
     out.types = _load_types(root)
     out.enums = _load_enums(root)
     out.commands = _load_commands(root)
@@ -423,8 +422,12 @@ def get_profiles(reg):
 def get_apis(reg):
     """Returns the set of api names defined in the Registry `reg`."""
     out = set()
+    for t in reg.types.values():
+        if t.api:
+            out.add(t.api)
     for ft in reg.features.values():
-        out.add(ft.api)
+        if ft.api:
+            out.add(ft.api)
     return out
 
 
@@ -524,217 +527,6 @@ def generate_api(reg, features=None, extensions=None, profile=None,
         out_apis.append(out)
 
     return out_apis
-
-
-def test_load_types():
-    contents = r'''<?xml version="1.0" encoding="UTF-8" ?>
-    <registry><types>
-    <type name="khrplatform">#include &lt;KHR/khrplatform.h&gt;</type>
-    <type>typedef signed char <name>GLbyte</name>;</type>
-    <type api="gles2"
-    requires="khrplatform">typedef khronos_int8_t <name>GLbyte</name>;</type>
-    </types></registry>
-    '''
-    root = xml.etree.ElementTree.fromstring(contents)
-    d = _load_types(root)
-    assert isinstance(d, dict)
-    assert len(d) == 3
-    x = d[('khrplatform', None)]
-    assert isinstance(x, Type)
-    assert x.name == 'khrplatform'
-    assert x.template == '#include <KHR/khrplatform.h>'
-    assert x.api is None
-    assert x.required_types == set()
-    x = d[('GLbyte', None)]
-    assert isinstance(x, Type)
-    assert x.name == 'GLbyte'
-    assert x.template == 'typedef signed char {name};'
-    assert x.api is None
-    assert x.required_types == set()
-    x = d[('GLbyte', 'gles2')]
-    assert isinstance(x, Type)
-    assert x.name == 'GLbyte'
-    assert x.template == 'typedef khronos_int8_t {name};'
-    assert x.api == 'gles2'
-    assert x.required_types == set(['khrplatform'])
-
-
-def test_load_enums():
-    contents = r'''<?xml version="1.0" encoding="UTF-8" ?>
-    <registry>
-    <enums namespace="GL" start="0x0000" end="0x7FFF" vendor="ARB">
-    <enum value="0x0000" name="GL_POINTS"/>
-    </enums>
-    <enums namespace="GL" vendor="ARB">
-    <enum value="0x806F" name="GL_TEXTURE_3D"/>
-    </enums>
-    </registry>
-    '''
-    root = xml.etree.ElementTree.fromstring(contents)
-    d = _load_enums(root)
-    assert isinstance(d, dict)
-    assert len(d) == 2
-    x = d['GL_POINTS']
-    assert isinstance(x, Enum)
-    assert x.name == 'GL_POINTS'
-    assert x.value == '0x0000'
-    x = d['GL_TEXTURE_3D']
-    assert isinstance(x, Enum)
-    assert x.name == 'GL_TEXTURE_3D'
-    assert x.value == '0x806F'
-
-
-def test_load_commands():
-    contents = r'''<?xml version="1.0" encoding="UTF-8" ?>
-    <registry><commands namespace="GL">
-    <command>
-    <proto>void <name>glBufferData</name></proto>
-    <param
-    group="BufferTargetARB"><ptype>GLenum</ptype> <name>target</name></param>
-    <param
-    group="BufferSize"><ptype>GLsizeiptr</ptype> <name>size</name></param>
-    <param len="size">const void *<name>data</name></param>
-    <param
-    group="BufferUsageARB"><ptype>GLenum</ptype> <name>usage</name></param>
-    </command>
-    </commands></registry>
-    '''
-    root = xml.etree.ElementTree.fromstring(contents)
-    d = _load_commands(root)
-    assert isinstance(d, dict)
-    assert len(d) == 1
-    x = d['glBufferData']
-    assert isinstance(x, Command)
-    assert x.name == 'glBufferData'
-    assert x.proto_template == 'void {name}'
-    y = x.params
-    assert isinstance(y, list)
-    assert len(y) == 4
-    z = y[0]
-    assert isinstance(z, Param)
-    assert z.name == 'target'
-    assert z.template == 'GLenum {name}'
-    z = y[1]
-    assert isinstance(z, Param)
-    assert z.name == 'size'
-    assert z.template == 'GLsizeiptr {name}'
-    z = y[2]
-    assert isinstance(z, Param)
-    assert z.name == 'data'
-    assert z.template == 'const void *{name}'
-    z = y[3]
-    assert isinstance(z, Param)
-    assert z.name == 'usage'
-    assert z.template == 'GLenum {name}'
-    x.required_types = set(['GLenum', 'GLsizeiptr'])
-
-
-def test_load_features():
-    contents = r'''<?xml version="1.0" encoding="UTF-8" ?>
-    <registry>
-    <feature api="gl" name="GL_VERSION_3_2" number="3.2">
-        <require>
-            <type name="GLbyte"/>
-            <enum name="GL_GEOMETRY_SHADER"/>
-        </require>
-        <require>
-            <enum name="GL_DEPTH_CLAMP"/>
-            <command name="glDrawElementsBaseVertex"/>
-        </require>
-        <remove profile="core">
-            <command name="glNewList"/>
-            <command name="glEndList"/>
-        </remove>
-        <remove profile="core">
-            <enum name="GL_POINT_BIT"/>
-            <command name="glArrayElement"/>
-        </remove>
-    </feature>
-    </registry>
-    '''
-    root = xml.etree.ElementTree.fromstring(contents)
-    d = _load_features(root)
-    assert isinstance(d, dict)
-    assert len(d) == 1
-    x = d['GL_VERSION_3_2']
-    assert isinstance(x, Feature)
-    assert x.name == 'GL_VERSION_3_2'
-    assert x.api == 'gl'
-    assert x.number == (3, 2)
-    requires = x.requires
-    assert isinstance(requires, list)
-    assert len(requires) == 2
-    y = requires[0]
-    assert isinstance(y, Require)
-    assert y.types == set(['GLbyte'])
-    assert y.enums == set(['GL_GEOMETRY_SHADER'])
-    assert y.commands == set()
-    assert y.profile is None
-    assert y.api is None
-    y = requires[1]
-    assert isinstance(y, Require)
-    assert y.types == set()
-    assert y.enums == set(['GL_DEPTH_CLAMP'])
-    assert y.commands == set(['glDrawElementsBaseVertex'])
-    assert y.profile is None
-    assert y.api is None
-    removes = x.removes
-    assert isinstance(removes, list)
-    assert len(removes) == 2
-    y = removes[0]
-    assert isinstance(y, Remove)
-    assert y.types == set()
-    assert y.enums == set()
-    assert y.commands == set(['glNewList', 'glEndList'])
-    assert y.profile == 'core'
-    y = removes[1]
-    assert isinstance(y, Remove)
-    assert y.types == set()
-    assert y.enums == set(['GL_POINT_BIT'])
-    assert y.commands == set(['glArrayElement'])
-    assert y.profile == 'core'
-
-
-def test_load_extensions():
-    contents = r'''<?xml version="1.0" encoding="UTF-8" ?>
-    <registry><extensions>
-    <extension name="GL_OES_EGL_image" supported="gles1|gles2">
-        <require>
-            <type name="GLeglImageOES"/>
-            <command name="glEGLImageTargetTexture2DOES"/>
-            <command name="glEGLImageTargetRenderbufferStorageOES"/>
-        </require>
-        <require api="gles2">
-            <enum name="GL_SAMPLER_EXTERNAL_OES"/>
-        </require>
-    </extension>
-    </extensions></registry>
-    '''
-    root = xml.etree.ElementTree.fromstring(contents)
-    d = _load_extensions(root)
-    assert isinstance(d, dict)
-    assert len(d) == 1
-    x = d['GL_OES_EGL_image']
-    assert x.name == 'GL_OES_EGL_image'
-    assert x.supported == set(['gles1', 'gles2'])
-    requires = x.requires
-    assert isinstance(requires, list)
-    assert len(requires) == 2
-    y = requires[0]
-    assert isinstance(y, Require)
-    assert y.types == set(['GLeglImageOES'])
-    assert y.enums == set()
-    assert y.commands == set(['glEGLImageTargetTexture2DOES',
-                             'glEGLImageTargetRenderbufferStorageOES'])
-    assert y.profile is None
-    assert y.api is None
-    y = requires[1]
-    assert isinstance(y, Require)
-    assert y.types == set()
-    assert y.enums == set(['GL_SAMPLER_EXTERNAL_OES'])
-    assert y.commands == set()
-    assert y.profile is None
-    assert y.api == 'gles2'
 
 
 def main(args, prog=None):
