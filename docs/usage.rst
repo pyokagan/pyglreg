@@ -1,11 +1,9 @@
 User Guide
 ===========
-
 .. py:currentmodule:: glreg
 
 Loading a Registry
 -------------------
-
 Begin by importing the glreg module:
 
 >>> import glreg
@@ -144,7 +142,6 @@ in internal :py:class:`Require` objects.
 >>> registry.extensions
 OrderedDict([('GL_3DFX_multisample', Extension(...)), ('GL_3DFX_tbuffer', ...
 
-
 Handling dependencies and removals
 ------------------------------------
 As seen above, :py:class:`Feature` objects and :py:class:`Extension` objects
@@ -234,7 +231,6 @@ registry respectively.
 >>> sorted(registry.get_supports())
 ['gl', 'glcore', 'gles1', 'gles2']
 
-
 Grouping Types, Enums and Commands by their Feature or Extension
 -----------------------------------------------------------------
 OpenGL C header files typically group types, enums and commands by
@@ -261,7 +257,6 @@ A simple OpenGL (ES) C header can thus be generated with the following loop:
 #include <KHR/khrplatform.h>
 typedef khronos_int8_t GLbyte;
 ...
-
 
 Command-line interface
 -----------------------
@@ -301,6 +296,5 @@ command line interface for generating C header files from a registry.
 
 Limitations
 -------------
-
 * ``<remove>`` tags in ``<extension>`` tags, despite being defined in
   the schema, is not supported because they do not make sense.
