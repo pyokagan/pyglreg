@@ -127,19 +127,23 @@ class TestLoadFunctions(unittest.TestCase):
         z = y[0]
         self.assertIsInstance(z, Param)
         self.assertEqual(z.name, 'target')
-        self.assertEqual(z.template, 'GLenum {name}')
+        self.assertEqual(z.type, 'GLenum')
+        self.assertEqual(z.template, '{type} {name}')
         z = y[1]
         self.assertIsInstance(z, Param)
         self.assertEqual(z.name, 'size')
-        self.assertEqual(z.template, 'GLsizeiptr {name}')
+        self.assertEqual(z.type, 'GLsizeiptr')
+        self.assertEqual(z.template, '{type} {name}')
         z = y[2]
         self.assertIsInstance(z, Param)
         self.assertEqual(z.name, 'data')
+        self.assertEqual(z.type, None)
         self.assertEqual(z.template, 'const void *{name}')
         z = y[3]
         self.assertIsInstance(z, Param)
         self.assertEqual(z.name, 'usage')
-        self.assertEqual(z.template, 'GLenum {name}')
+        self.assertEqual(z.type, 'GLenum')
+        self.assertEqual(z.template, '{type} {name}')
         self.assertEqual(x.required_types, {'GLenum', 'GLsizeiptr'})
 
     def test_load_features(self, features=None):
@@ -158,16 +162,16 @@ class TestLoadFunctions(unittest.TestCase):
         self.assertEqual(len(requires), 2)
         y = requires[0]
         self.assertIsInstance(y, Require)
-        self.assertEqual(y.types, {'GLbyte'})
-        self.assertEqual(y.enums, {'GL_POINTS'})
-        self.assertEqual(y.commands, set())
+        self.assertEqual(y.types, ['GLbyte'])
+        self.assertEqual(y.enums, ['GL_POINTS'])
+        self.assertEqual(y.commands, [])
         self.assertIsNone(y.profile)
         self.assertIsNone(y.api)
         y = requires[1]
         self.assertIsInstance(y, Require)
-        self.assertEqual(y.types, set())
-        self.assertEqual(y.enums, {'GL_TEXTURE_3D'})
-        self.assertEqual(y.commands, {'glBufferData'})
+        self.assertEqual(y.types, [])
+        self.assertEqual(y.enums, ['GL_TEXTURE_3D'])
+        self.assertEqual(y.commands, ['glBufferData'])
         self.assertIsNone(y.profile)
         self.assertIsNone(y.api)
         removes = x.removes
@@ -175,15 +179,15 @@ class TestLoadFunctions(unittest.TestCase):
         self.assertEqual(len(removes), 2)
         y = removes[0]
         self.assertIsInstance(y, Remove)
-        self.assertEqual(y.types, set())
-        self.assertEqual(y.enums, set())
-        self.assertEqual(y.commands, {'glNewList', 'glEndList'})
+        self.assertEqual(y.types, [])
+        self.assertEqual(y.enums, [])
+        self.assertEqual(y.commands, ['glNewList', 'glEndList'])
         self.assertEqual(y.profile, 'core')
         y = removes[1]
         self.assertIsInstance(y, Remove)
-        self.assertEqual(y.types, set())
-        self.assertEqual(y.enums, {'GL_POINT_BIT'})
-        self.assertEqual(y.commands, {'glArrayElement'})
+        self.assertEqual(y.types, [])
+        self.assertEqual(y.enums, ['GL_POINT_BIT'])
+        self.assertEqual(y.commands, ['glArrayElement'])
         self.assertEqual(y.profile, 'core')
 
     def test_load_extensions(self, extensions=None):
@@ -200,9 +204,9 @@ class TestLoadFunctions(unittest.TestCase):
         self.assertEqual(len(requires), 1)
         y = requires[0]
         self.assertIsInstance(y, Require)
-        self.assertEqual(y.types, set())
-        self.assertEqual(y.enums, set())
-        self.assertEqual(y.commands, {'glBufferData'})
+        self.assertEqual(y.types, [])
+        self.assertEqual(y.enums, [])
+        self.assertEqual(y.commands, ['glBufferData'])
         self.assertIsNone(y.profile)
         self.assertIsNone(y.api)
 
@@ -225,6 +229,41 @@ class TestLoadFunctions(unittest.TestCase):
         self.test_load_commands(registry.commands)
         self.test_load_features(registry.features)
         self.test_load_extensions(registry.extensions)
+
+
+class TestRegistry(unittest.TestCase):
+    """Test Registy interface"""
+
+    def setUp(self):
+        self.src = loads(_test_reg)
+
+    def test_get_requires(self):
+        requires = self.src.get_requires()
+        self.assertIsInstance(requires, list)
+        self.assertEqual(len(requires), 3)
+
+    def test_get_removes(self):
+        removes = self.src.get_removes()
+        self.assertIsInstance(removes, list)
+        # NOTE: No Remove objects are returned because we did
+        # not specify any api or profile, and thus no Removals
+        # are active.
+        self.assertEqual(len(removes), 0)
+
+    def test_get_profiles(self):
+        profiles = self.src.get_profiles()
+        self.assertIsInstance(profiles, set)
+        self.assertEqual(profiles, {'core'})
+
+    def test_get_apis(self):
+        apis = self.src.get_apis()
+        self.assertIsInstance(apis, set)
+        self.assertEqual(apis, {'gl', 'gles2'})
+
+    def test_get_supports(self):
+        supports = self.src.get_supports()
+        self.assertIsInstance(supports, set)
+        self.assertEqual(supports, {'gl'})
 
 
 class TestImportFunctions(unittest.TestCase):
@@ -342,48 +381,18 @@ class TestImportFunctions(unittest.TestCase):
         self.assertIs(dcmds['glBufferData'], scmds['glBufferData'])
 
 
-class TestGetters(unittest.TestCase):
-    def setUp(self):
-        self.src = loads(_test_reg)
-
-    def test_get_requires(self):
-        requires = get_requires(self.src)
-        self.assertIsInstance(requires, set)
-        self.assertEqual(len(requires), 3)
-
-    def test_get_removes(self):
-        removes = get_removes(self.src)
-        self.assertIsInstance(removes, set)
-        self.assertEqual(len(removes), 2)
-
-    def test_get_profiles(self):
-        profiles = get_profiles(self.src)
-        self.assertIsInstance(profiles, set)
-        self.assertEqual(profiles, {'core'})
-
-    def test_get_apis(self):
-        apis = get_apis(self.src)
-        self.assertIsInstance(apis, set)
-        self.assertEqual(apis, {'gl', 'gles2'})
-
-    def test_get_extension_support_strings(self):
-        supports = get_extension_support_strings(self.src)
-        self.assertIsInstance(supports, set)
-        self.assertEqual(supports, {'gl'})
-
-
-class TestGenerateAPI(unittest.TestCase):
-    def test_generate_api(self):
+class TestGroupAPIS(unittest.TestCase):
+    def test_group_apis(self):
         reg = loads(_test_reg)
         stypes = reg.types
         senums = reg.enums
         scmds = reg.commands
-        apis = generate_api(reg)
+        apis = group_apis(reg)
         self.assertIsInstance(apis, list)
         self.assertEqual(len(apis), 2)
         # Test for first API (GL_VERSION_3_2)
         api = apis[0]
-        self.assertIsInstance(api, API)
+        self.assertIsInstance(api, Registry)
         # Test types
         dtypes = api.types
         self.assertIsInstance(dtypes, collections.OrderedDict)
@@ -398,7 +407,7 @@ class TestGenerateAPI(unittest.TestCase):
         self.assertEqual(len(dcmds), 1)
         # Test for second API (GL_ARB_vertex_buffer_object)
         api = apis[1]
-        self.assertIsInstance(api, API)
+        self.assertIsInstance(api, Registry)
         # Test types
         dtypes = api.types
         self.assertIsInstance(dtypes, collections.OrderedDict)

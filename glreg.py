@@ -1,8 +1,118 @@
 #!/usr/bin/env python
 r"""parse OpenGL registry files
 
-This module parses OpenGL API XML registry files and extracts data which can be
-used to generate OpenGL headers and loading libraries.
+This module provides functionality to parse and extract data from
+OpenGL XML API Registry files. Types, enums and functions (commands) in the
+registry can be enumerated. This module also provides functions to resolve
+dependencies and filter APIs in the registry. This makes it useful for
+generating OpenGL headers or loaders.
+
+Load a `Registry` object from a file using `load`:
+
+>>> registry = load(open('gl.xml'))
+
+`Type` objects define the OpenGL types such as ``GLbyte``, ``GLint`` etc.
+
+>>> registry.types
+OrderedDict([(('stddef', None), Type(...)), ...
+>>> registry.get_type('GLbyte')  # Get OpenGL's GLbyte typedef
+Type('GLbyte', 'typedef signed char {name};')
+>>> registry.get_type('GLbyte', 'gles2')  # Get OpenGLES2's GLbyte typedef
+Type('GLbyte', 'typedef khronos_int8_t {name};', ...
+
+`Enum` objects define OpenGL constants such as ``GL_POINTS``, ``GL_TRIANGLES``
+etc.
+
+>>> registry.enums
+OrderedDict([('GL_CURRENT_BIT', Enum('GL_CURRENT_BIT', '0x00000001')), ...
+>>> registry.enums['GL_POINTS']
+Enum('GL_POINTS', '0x0000')
+
+`Command` objects define OpenGL functions such as ``glClear``,
+``glDrawArrays`` etc.
+
+>>> registry.commands
+OrderedDict([('glAccum', Command(...)), ('glAccumxOES', Command(...
+>>> registry.commands['glDrawArrays']
+Command('glDrawArrays', 'void {name}', [Param('mode', 'GLenum', ...
+
+`Feature` objects are basically OpenGL version definitions. Each `Feature`
+object lists the type, enum and command names that were introduced
+in that version in internal `Require` objects.
+
+>>> registry.features
+OrderedDict([('GL_VERSION_1_0', Feature(...)), ('GL_VERSION_1_1', Feature(...
+>>> registry.features['GL_VERSION_3_2']  # OpenGL version 3.2
+Feature('GL_VERSION_3_2', 'gl', (3, 2), [Require([], ['GL_CONTEXT_CORE_PRO...
+>>> feature = registry.features['GL_VERSION_3_2']
+>>> feature.requires  # List of Require objects
+[Require([], ['GL_CONTEXT_CORE_PROFILE_BIT', 'GL_CONTEXT_COMPATIBILITY...
+
+On the other hand, `Remove` objects specify the types, enum and command names
+that were removed in that version.
+
+>>> feature.removes  # List of Remove objects
+[Remove([], [], ['glNewList', 'glEndList', 'glCallList', 'glCallLists', ...
+
+`Extension` objects are OpenGL extension definitions. Just like `Feature`
+objects, each `Extension` object lists the type, enum and command names that
+were defined in that extension in internal `Require` objects.
+
+>>> registry.extensions
+OrderedDict([('GL_3DFX_multisample', Extension(...)), ('GL_3DFX_tbuffer', ...
+
+As we can see, Features and Extensions express dependencies and removals
+of types, enums and commands in a registry through their `Require` and `Remove`
+objects. These dependencies and removals can be resolved through the
+`import_*` functions.
+
+>>> dst = Registry()  # Destination registry
+>>> import_feature(dst, registry, 'GL_VERSION_3_2')
+>>> dst.features  # `dst` now only contains GL_VERSION_3_2 and its deps
+OrderedDict([('GL_VERSION_3_2', Feature('GL_VERSION_3_2', 'gl', (3, 2), ...
+
+Features can be filtered by api name and profile name, and Extensions can be
+filtered by extension support strings. This allows you to extract, for example,
+only the OpenGL core API or the OpenGL ES 2 API.
+
+>>> dst = Registry()  # Destination registry
+>>> import_registry(dst, registry, api='gl', profile='core', support='glcore')
+>>> list(dst.features.keys())  # dst now only contains OpenGL Core features
+['GL_VERSION_1_0', 'GL_VERSION_1_1', 'GL_VERSION_1_2', ...
+>>> list(dst.extensions.keys())  # dst now only contains OpenGL Core extensions
+['GL_ARB_ES2_compatibility', 'GL_ARB_ES3_1_compatibility', 'GL_ARB_ES3_comp...
+
+Use the `get_apis`, `get_profiles` and `get_supports` member
+functions of Registry objects to get all the api names, profile names and
+extension support strings referenced in the registry respectively.
+
+>>> sorted(registry.get_apis())
+['gl', 'gles1', 'gles2']
+>>> sorted(registry.get_profiles())
+['common', 'compatibility', 'core']
+>>> sorted(registry.get_supports())
+['gl', 'glcore', 'gles1', 'gles2']
+
+Finally, `group_apis` generates a new Registry for every feature and extension
+in a registry, thus effectively grouping types, enums and commands with the
+feature and extension or they were first defined in.
+
+>>> group_apis(registry, api='gles2', support='gles2')
+[Registry('GL_ES_VERSION_2_0', OrderedDict([(('khrplatform', None), Type...
+
+This allows you to generate a simple OpenGL (ES) C header with a simple loop:
+
+>>> for api in group_apis(registry, api='gles2', support='gles2'):
+...     print('#ifndef ' + api.name)
+...     print('#define ' + api.name)
+...     print(api.text)
+...     print('#endif')
+#ifndef GL_ES_VERSION_2_0
+#define GL_ES_VERSION_2_0
+#include <KHR/khrplatform.h>
+typedef khronos_int8_t GLbyte;
+...
+
 """
 from __future__ import print_function
 import collections
@@ -15,83 +125,480 @@ import xml.etree.ElementTree
 __author__ = 'Paul Tan <pyokagan@gmail.com>'
 __version__ = '0.9.0'
 __all__ = ['Type', 'Enum', 'Command', 'Param', 'Require', 'Remove', 'Feature',
-           'Extension', 'API', 'Registry', 'load', 'loads', 'get_type',
-           'import_type', 'import_command', 'import_enum', 'import_feature',
-           'import_extension', 'import_registry', 'get_requires',
-           'get_removes', 'get_profiles', 'get_apis',
-           'get_extension_support_strings', 'extension_name_sort_key',
-           'generate_api']
+           'Extension', 'Registry', 'load', 'loads', 'import_type',
+           'import_command', 'import_enum', 'import_feature',
+           'import_extension', 'import_registry', 'extension_name_sort_key',
+           'group_apis']
+
+
+def _repr(self, args, opt_args=()):
+    args = list(args)
+    args.extend(x for x in opt_args if x)
+    return '{0}({1})'.format(self.__class__.__name__,
+                             ', '.join(repr(x) for x in args))
 
 
 class Type(object):
-    name = None  # Type name
-    template = None  # Type template string
-    text = None  # Type string
-    required_types = None  # Set of Type names which this Type depends on
-    api = None  # API for which the Type is valid
+    def __init__(self, name, template, required_types=None, api=None,
+                 comment=None):
+        #: Type name
+        self.name = str(name)
+        #: Type definition template
+        self.template = str(template)
+        #: Set of strings specifying the names of types this type depends on
+        self.required_types = set(required_types)
+        #: API name which this Type is valid for
+        self.api = api
+        #: Optional comment
+        self.comment = comment
+
+    @property
+    def text(self):
+        """Formatted type definition
+
+        Equivalent to ``self.template.format(name=self.name,
+        apientry='APIENTRY')``
+        """
+        return self.template.format(name=self.name, apientry='APIENTRY')
+
+    def __repr__(self):
+        return _repr(self, (self.name, self.template),
+                     (self.required_types, self.api, self.comment))
 
 
 class Enum(object):
-    name = None  # Enum string name
-    value = None  # Enum string value
+    def __init__(self, name, value, comment=None):
+        #: Enum name
+        self.name = str(name)
+        #: Enum string value
+        self.value = str(value)
+        #: Optional comment
+        self.comment = comment
+
+    @property
+    def text(self):
+        """Formatted enum C definition
+
+        Equivalent to ``'#define {0.name} {0.value}'.format(self)``
+        """
+        return '#define {0.name} {0.value}'.format(self)
+
+    def __repr__(self):
+        return _repr(self, (self.name, self.value), (self.comment,))
 
 
 class Command(object):
-    name = None  # Command name
-    proto_template = None  # Command prototype template string
-    proto_text = None  # Command prototype text string
-    params = None  # List of Params
-    required_types = None  # Set of Type names which this command depends on
+    def __init__(self, name, proto_template, params, comment=None):
+        #: Command name
+        self.name = str(name)
+        #: Command identifier template string
+        self.proto_template = str(proto_template)
+        #: List of command Params
+        self.params = list(params)
+        #: Optional comment
+        self.comment = comment
+
+    @property
+    def required_types(self):
+        """Set of names of types which the Command depends on.
+        """
+        required_types = set(x.type for x in self.params)
+        required_types.discard(None)
+        return required_types
+
+    @property
+    def proto_text(self):
+        """Formatted Command identifier.
+
+        Equivalent to ``self.proto_template.format(name=self.name)``.
+        """
+        return self.proto_template.format(name=self.name)
+
+    @property
+    def text(self):
+        """Formatted Command declaration.
+
+        This is the C declaration for the command.
+        """
+        params = ', '.join(x.text for x in self.params)
+        return '{0} ({1});'.format(self.proto_text, params)
+
+    def __repr__(self):
+        return _repr(self, (self.name, self.proto_template, self.params),
+                     (self.comment,))
 
 
 class Param(object):
-    name = None  # Parameter name
-    template = None  # Parameter template string
-    text = None  # Parameter text string
+    def __init__(self, name, type, template):
+        #: Param name
+        self.name = name
+        #: Name of type the param depends on, else None
+        self.type = type
+        #: Param definition template
+        self.template = template
+
+    @property
+    def text(self):
+        """Formatted param definition
+
+        Equivalent to ``self.template.format(name=self.name, type=self.type)``.
+        """
+        return self.template.format(name=self.name, type=self.type)
+
+    def __repr__(self):
+        return _repr(self, (self.name, self.type, self.template))
 
 
 class Require(object):
-    types = None  # Set of type names required
-    enums = None  # Set of enum names required
-    commands = None  # Set of command names required
-    api = None  # API which this requirement is valid for
-    profile = None  # Profile which this requirement is valid for
+    """A requirement
+
+    """
+
+    def __init__(self, types, enums, commands, profile=None, api=None,
+                 comment=None):
+        #: List of type names which this Require requires
+        self.types = types
+        #: List of enum names which this Require requires
+        self.enums = enums
+        #: List of command names which this Require requires
+        self.commands = commands
+        #: Profile name which this Require is valid for
+        self.profile = profile
+        #: API name which this Require is valid for
+        self.api = api  # NOTE: Only used in Extensions
+        #: Optional comment
+        self.comment = comment
+
+    def as_symbols(self):
+        """Set of symbols required by this Require
+
+        :return: set of ``(symbol type, symbol name)`` tuples
+        """
+        out = set()
+        for name in self.types:
+            out.add(('type', name))
+        for name in self.enums:
+            out.add(('enum', name))
+        for name in self.commands:
+            out.add(('command', name))
+        return out
+
+    def __repr__(self):
+        return _repr(self, (self.types, self.enums, self.commands),
+                     (self.profile, self.api, self.comment))
 
 
 class Remove(object):
-    types = None  # Set of type names to remove
-    enums = None  # Set of enum names to remove
-    commands = None  # Set of command names to remove
-    profile = None  # Profile which this removal is valid for
+    """Removal requirement
+
+    """
+
+    def __init__(self, types, enums, commands, profile=None, comment=None):
+        #: List of type names of Types to remove
+        self.types = types
+        #: List of enum names of Enums to remove
+        self.enums = enums
+        #: List of command names of Commands to remove
+        self.commands = commands
+        #: Profile name which this Remove is valid for
+        self.profile = profile
+        #: Optional comment
+        self.comment = comment
+
+    def as_symbols(self):
+        """Set of symbols required to be removed by this Remove
+
+        :return: set of ``(symbol type, symbol name)`` tuples
+        """
+        out = set()
+        for name in self.types:
+            out.add(('type', name))
+        for name in self.enums:
+            out.add(('enum', name))
+        for name in self.commands:
+            out.add(('command', name))
+        return out
+
+    def __repr__(self):
+        return _repr(self, (self.types, self.enums, self.commands),
+                     (self.profile, self.comment))
 
 
 class Feature(object):
-    name = None  # Feature name
-    api = None  # Feature API name
-    number = None  # Feature number as a (major, minor) tuple
-    requires = None  # List of requirements
-    removes = None  # List of removals
+    """Feature
+
+    """
+
+    def __init__(self, name, api, number, requires, removes, comment=None):
+        #: Feature name
+        self.name = name
+        #: API name which this Feature is valid for
+        self.api = api
+        #: Feature version
+        self.number = number
+        #: List of Feature Require objects
+        self.requires = list(requires or ())
+        #: List of Feature Remove objects
+        self.removes = list(removes or ())
+        #: Optional comment
+        self.comment = comment
+
+    def get_apis(self):
+        """Returns set of api names referenced in this Feature.
+
+        :returns: set of api names
+        """
+        return set((self.api,) if self.api else ())
+
+    def get_profiles(self):
+        """Returns set of profile names referenced in this Feature
+
+        :returns: set of profile names
+        """
+        out = set(x.profile for x in self.requires if x.profile)
+        out.update(x.profile for x in self.removes if x.profile)
+        return out
+
+    def get_requires(self, profile=None):
+        """Get filtered list of Require objects in this Feature
+
+        :param str profile: Return Require objects with this profile or None
+                            to return all Require objects.
+        :return: list of Require objects
+        """
+        out = []
+        for req in self.requires:
+            # Filter Require by profile
+            if ((req.profile and not profile) or
+               (req.profile and profile and req.profile != profile)):
+                continue
+            out.append(req)
+        return out
+
+    def get_removes(self, profile=None):
+        """Get filtered list of Remove objects in this Feature
+
+        :param str profile: Return Remove objects with this profile or None
+                            to return all Remove objects.
+        :return: list of Remove objects
+        """
+        out = []
+        for rem in self.removes:
+            # Filter Remove by profile
+            if ((rem.profile and not profile) or
+               (rem.profile and profile and rem.profile != profile)):
+                continue
+            out.append(rem)
+        return out
+
+    def __repr__(self):
+        return _repr(self, (self.name, self.api, self.number, self.requires,
+                            self.removes), (self.comment,))
 
 
 class Extension(object):
-    name = None  # Extension name
-    supported = None  # Set of 'supported' strings
-    requires = None  # List of requirements
+    """Extension
+
+    """
+
+    def __init__(self, name, supported, requires, comment=None):
+        #: Extension name
+        self.name = name
+        #: Set of extension 'supported' strings
+        self.supported = set(supported or ())
+        #: List of `Require` objects
+        self.requires = requires
+        #: Optional comment
+        self.comment = comment
+
+    def get_apis(self):
+        """Returns set of api names referenced in this Extension
+
+        :return: set of api name strings
+        """
+        out = set()
+        out.update(x.api for x in self.requires if x.api)
+        return out
+
+    def get_profiles(self):
+        """Returns set of profile names referenced in this Extension
+
+        :return: set of profile name strings
+        """
+        return set(x.profile for x in self.requires if x.profile)
+
+    def get_supports(self):
+        """Returns set of extension support strings referenced in Extension
+
+        :return: set of extension support strings
+        """
+        return set(self.supported)
+
+    def get_requires(self, api=None, profile=None):
+        """Return filtered list of Require objects in this Extension
+
+        :param str api: Return Require objects with this api name or None to
+                        return all Require objects.
+        :param str profile: Return Require objects with this profile or None
+                            to return all Require objects.
+        :return: list of Require objects
+        """
+        out = []
+        for req in self.requires:
+            # Filter Remove by API
+            if (req.api and not api) or (req.api and api and req.api != api):
+                continue
+            # Filter Remove by profile
+            if ((req.profile and not profile) or
+               (req.profile and profile and req.profile != profile)):
+                continue
+            out.append(req)
+        return out
+
+    def __repr__(self):
+        return _repr(self, (self.name, self.supported, self.requires),
+                     (self.comment,))
 
 
-class API(object):
-    def __init__(self):
-        self.name = None  # Optional name
-        self.types = collections.OrderedDict()
-        self.enums = collections.OrderedDict()
-        self.commands = collections.OrderedDict()
+class Registry:
+    """API Registry
 
+    """
 
-class Registry(API):
-    def __init__(self):
-        super(Registry, self).__init__()
-        self.features = collections.OrderedDict()
-        self.extensions = collections.OrderedDict()
+    def __init__(self, name=None, types=None, enums=None, commands=None,
+                 features=None, extensions=None):
+        #: Optional API name (or None)
+        self.name = name
+        #: Mapping of ``(type name, type API)`` to `Type` objects
+        self.types = collections.OrderedDict(types or ())
+        #: Mapping of enum names to `Enum` objects
+        self.enums = collections.OrderedDict(enums or ())
+        #: Mapping of command names to `Command` objects
+        self.commands = collections.OrderedDict(commands or ())
+        #: Mapping of feature names to `Feature` objects
+        self.features = collections.OrderedDict(features or ())
+        #: Mapping of extension names to `Extension` objects
+        self.extensions = collections.OrderedDict(extensions or ())
+
+    @property
+    def text(self):
+        """Formatted API declarations.
+
+        Equivalent to the concatenation of `text` attributes of
+        types, enums and commands in this API.
+        """
+        out = []
+        out.extend(x.text for x in self.types.values())
+        out.extend(x.text for x in self.enums.values())
+        out.extend('extern {0}'.format(x.text) for x in self.commands.values())
+        return '\n'.join(out)
+
+    def get_type(self, name, api=None):
+        """Returns Type `name`, with preference for the Type of `api`.
+
+        :param str name: Type name
+        :param str api: api name to prefer, of None to prefer types with no
+                        api name
+        :return: Type object
+        """
+        k = (name, api)
+        if k in self.types:
+            return self.types[k]
+        else:
+            return self.types[(name, None)]
+
+    def get_features(self, api=None):
+        """Returns filtered list of features in this registry
+
+        :param str api: Return only features with this api name, or None to
+                        return all features.
+        :return: list of Feature objects
+        """
+        return [x for x in self.features.values()
+                if api and x.api == api or not api]
+
+    def get_extensions(self, support=None):
+        """Returns filtered list of extensions in this registry
+
+        :param support: Return only extensions with this extension support
+                        string, or None to return all extensions.
+        :return: list of Extension objects
+        """
+        return [x for x in self.extensions.values() if support
+                and support in x.supported or not support]
+
+    def get_requires(self, api=None, profile=None, support=None):
+        """Returns filtered list of Require objects in this registry
+
+        :param str api: Return Require objects with this api name or None to
+                        return all Require objects.
+        :param str profile: Return Require objects with this profile or None
+                            to return all Require objects.
+        :param str support: Return Require objects with this extension support
+                            string or None to return all Require objects.
+        :return: list of Require objects
+        """
+        out = []
+        for ft in self.get_features(api):
+            out.extend(ft.get_requires(profile))
+        for ext in self.extensions.values():
+            # Filter extension support
+            if support and support not in ext.supported:
+                continue
+            out.extend(ext.get_requires(api, profile))
+        return out
+
+    def get_removes(self, api=None, profile=None):
+        """Returns filtered list of Remove objects in this registry
+
+        :param str api: Return Remove objects with this api name or None to
+                        return all Remove objects.
+        :param str profile: Return Remove objects with this profile or None
+                            to return all Remove objects.
+        :return: list of Remove objects
+        """
+        out = []
+        for ft in self.get_features(api):
+            out.extend(ft.get_removes(profile))
+        return out
+
+    def get_apis(self):
+        """Returns set of api names referenced in this Registry
+
+        :return: set of api name strings
+        """
+        out = set(x.api for x in self.types.values() if x.api)
+        for ft in self.features.values():
+            out.update(ft.get_apis())
+        for ext in self.extensions.values():
+            out.update(ext.get_apis())
+        return out
+
+    def get_profiles(self):
+        """Returns set of profile names referenced in this Registry
+
+        :return: set of profile name strings
+        """
+        out = set()
+        for ft in self.features.values():
+            out.update(ft.get_profiles())
+        for ext in self.extensions.values():
+            out.update(ext.get_profiles())
+        return out
+
+    def get_supports(self):
+        """Returns set of extension support strings referenced in this Registry
+
+        :return: set of extension support strings
+        """
+        out = set()
+        for ext in self.extensions.values():
+            out.update(ext.get_supports())
+        return out
+
+    def __repr__(self):
+        return _repr(self, (self.name,), (self.types, self.enums,
+                     self.commands, self.features, self.extensions))
 
 
 def _escape_tpl_str(x):
@@ -105,46 +612,44 @@ def _escape_tpl_str(x):
 
 def _load(root):
     """Load from an xml.etree.ElementTree"""
-    out = Registry()
-    out.types = _load_types(root)
-    out.enums = _load_enums(root)
-    out.commands = _load_commands(root)
-    out.features = _load_features(root)
-    out.extensions = _load_extensions(root)
-    return out
+    types = _load_types(root)
+    enums = _load_enums(root)
+    commands = _load_commands(root)
+    features = _load_features(root)
+    extensions = _load_extensions(root)
+    return Registry(None, types, enums, commands, features, extensions)
 
 
 def _load_types(root):
     """Returns {name: Type}"""
-    def text(t, template):
-        if t.tag == 'name' and template:
+    def text(t):
+        if t.tag == 'name':
             return '{name}'
-        elif t.tag == 'apientry' and template:
+        elif t.tag == 'apientry':
             return '{apientry}'
         out = []
         if t.text:
-            out.append(_escape_tpl_str(t.text) if template else t.text)
+            out.append(_escape_tpl_str(t.text))
         for x in t:
-            out.append(text(x, template))
+            out.append(text(x))
             if x.tail:
-                out.append(_escape_tpl_str(x.tail) if template else x.tail)
+                out.append(_escape_tpl_str(x.tail))
         return ''.join(out)
     out_dict = collections.OrderedDict()
     for elem in root.findall('types/type'):
-        out = Type()
-        out.name = elem.get('name') or elem.find('name').text
-        out.template = text(elem, True)
-        out.text = text(elem, False)
+        name = elem.get('name') or elem.find('name').text
+        template = text(elem)
+        api = elem.get('api')
         if 'requires' in elem.attrib:
-            out.required_types = set((elem.attrib['requires'],))
+            required_types = set((elem.attrib['requires'],))
         else:
-            out.required_types = set()
-        out.api = elem.get('api')
-        if out.api:
-            k = (out.name, out.api)
+            required_types = set()
+        comment = elem.get('comment')
+        if api:
+            k = (name, api)
         else:
-            k = (out.name, None)
-        out_dict[k] = out
+            k = (name, None)
+        out_dict[k] = Type(name, template, required_types, api, comment)
     return out_dict
 
 
@@ -152,90 +657,87 @@ def _load_enums(root):
     """Returns {name: Enum}"""
     out = collections.OrderedDict()
     for elem in root.findall('enums/enum'):
-        enum = Enum()
-        enum.name = elem.attrib['name']
-        enum.value = elem.attrib['value']
-        out[enum.name] = enum
+        name = elem.attrib['name']
+        value = elem.attrib['value']
+        comment = elem.get('comment')
+        out[name] = Enum(name, value, comment)
     return out
 
 
 def _load_param(elem):
-    def text(t, template):
-        if t.tag == 'name' and template:
+    def text(t):
+        if t.tag == 'name':
             return '{name}'
+        elif t.tag == 'ptype':
+            return '{type}'
         out = []
         if t.text:
-            out.append(_escape_tpl_str(t.text) if template else t.text)
+            out.append(_escape_tpl_str(t.text))
         for x in t:
-            out.append(text(x, template))
+            out.append(text(x))
             if x.tail:
-                out.append(_escape_tpl_str(x.tail) if template else x.tail)
+                out.append(_escape_tpl_str(x.tail))
         return ''.join(out)
-    out = Param()
-    out.name = elem.find('name').text
-    out.template = text(elem, True)
-    out.text = text(elem, False)
-    return out
+    name = elem.find('name').text
+    type_elem = elem.find('ptype')
+    type = type_elem.text if type_elem is not None else None
+    template = text(elem)
+    return Param(name, type, template)
 
 
 def _load_commands(root):
     """Returns {name: Command}"""
-    def proto_text(t, template):
-        if t.tag == 'name' and template:
+    def proto_text(t):
+        if t.tag == 'name':
             return '{name}'
         out = []
         if t.text:
-            out.append(_escape_tpl_str(t.text) if template else t.text)
+            out.append(_escape_tpl_str(t.text))
         for x in t:
-            out.append(proto_text(x, template))
+            out.append(proto_text(x))
             if x.tail:
-                out.append(_escape_tpl_str(x.tail) if template else x.tail)
+                out.append(_escape_tpl_str(x.tail))
         return ''.join(out)
     out = collections.OrderedDict()
     for elem in root.findall('commands/command'):
-        cmd = Command()
-        cmd.name = elem.get('name') or elem.find('proto/name').text
-        cmd.proto_template = proto_text(elem.find('proto'), True)
-        cmd.proto_text = proto_text(elem.find('proto'), False)
-        cmd.params = [_load_param(x) for x in elem.findall('param')]
-        cmd.required_types = set()
-        for elem2 in elem.findall('.//ptype'):
-            cmd.required_types.add(elem2.text)
-        out[cmd.name] = cmd
+        name = elem.get('name') or elem.find('proto/name').text
+        proto_template = proto_text(elem.find('proto'))
+        params = [_load_param(x) for x in elem.findall('param')]
+        comment = elem.get('comment')
+        out[name] = Command(name, proto_template, params, comment)
     return out
 
 
 def _load_require(elem):
-    out = Require()
-    out.profile = elem.get('profile')
-    out.api = elem.get('api')
-    out.types = set([x.attrib['name'] for x in elem.findall('type')])
-    out.enums = set([x.attrib['name'] for x in elem.findall('enum')])
-    out.commands = set([x.attrib['name'] for x in elem.findall('command')])
-    return out
+    types = [x.attrib['name'] for x in elem.findall('type')]
+    enums = [x.attrib['name'] for x in elem.findall('enum')]
+    commands = [x.attrib['name'] for x in elem.findall('command')]
+    profile = elem.get('profile')
+    api = elem.get('api')
+    comment = elem.get('comment')
+    return Require(types, enums, commands, profile, api, comment)
 
 
 def _load_remove(elem):
-    out = Remove()
-    out.profile = elem.get('profile')
-    out.types = set([x.attrib['name'] for x in elem.findall('type')])
-    out.enums = set([x.attrib['name'] for x in elem.findall('enum')])
-    out.commands = set([x.attrib['name'] for x in elem.findall('command')])
-    return out
+    types = [x.attrib['name'] for x in elem.findall('type')]
+    enums = [x.attrib['name'] for x in elem.findall('enum')]
+    commands = [x.attrib['name'] for x in elem.findall('command')]
+    profile = elem.get('profile')
+    comment = elem.get('comment')
+    return Remove(types, enums, commands, profile, comment)
 
 
 def _load_features(root):
     """Returns {name: Feature}"""
     out = collections.OrderedDict()
     for elem in root.findall('feature'):
-        ft = Feature()
-        ft.name = elem.attrib['name']
-        ft.api = elem.attrib['api']
-        ft.number = tuple([int(x) for x in elem.attrib['number'].split('.')])
-        ft.types = set()
-        ft.requires = [_load_require(x) for x in elem.findall('require')]
-        ft.removes = [_load_remove(x) for x in elem.findall('remove')]
-        out[ft.name] = ft
+        name = elem.attrib['name']
+        api = elem.attrib['api']
+        number = tuple([int(x) for x in elem.attrib['number'].split('.')])
+        requires = [_load_require(x) for x in elem.findall('require')]
+        removes = [_load_remove(x) for x in elem.findall('remove')]
+        comment = elem.get('comment')
+        out[name] = Feature(name, api, number, requires, removes, comment)
     return out
 
 
@@ -243,21 +745,31 @@ def _load_extensions(root):
     """Returns {name: Extension}"""
     out = collections.OrderedDict()
     for elem in root.findall('extensions/extension'):
-        ext = Extension()
-        ext.name = elem.attrib['name']
-        ext.supported = set(elem.attrib['supported'].split('|'))
-        ext.requires = [_load_require(x) for x in elem.findall('require')]
-        out[ext.name] = ext
+        name = elem.attrib['name']
+        supported = set(elem.attrib['supported'].split('|'))
+        requires = [_load_require(x) for x in elem.findall('require')]
+        comment = elem.get('comment')
+        out[name] = Extension(name, supported, requires, comment)
     return out
 
 
 def load(f):
-    """Loads Registry from file"""
+    """Loads Registry from file
+
+    :param f: File to load
+    :type f: File-like object
+    :return: Registry
+    """
     return _load(xml.etree.ElementTree.parse(f))
 
 
 def loads(s):
-    """Load registry from string"""
+    """Load registry from string
+
+    :param s: Registry XML contents
+    :type s: str or bytes
+    :return: Registry
+    """
     return _load(xml.etree.ElementTree.fromstring(s))
 
 
@@ -272,22 +784,22 @@ def _default_filter_require(require):
     return True
 
 
-def get_type(src, name, api=None):
-    """Returns Type `name` from API `src`, with preference for the
-    Type that requires API `api`."""
-    k = (name, api)
-    if k in src.types:
-        return src.types[k]
-    else:
-        return src.types[(name, None)]
-
-
 def import_type(dest, src, name, api=None, filter_symbol=None):
-    """Import Type `name` and its dependencies from API `src`
-    to API `dest`"""
+    """Import Type `name` and its dependencies from Registry `src`
+    to Registry `dest`.
+
+    :param Registry dest: Destination Registry
+    :param Registry src: Source Registry
+    :param str name: Name of type to import
+    :param str api: Prefer to import Types with api Name `api`, or None to
+                    import Types with no api name.
+    :param filter_symbol: Optional filter callable
+    :type filter_symbol: Callable with signature
+                         ``(symbol_type:str, symbol_name:str) -> bool``
+    """
     if not filter_symbol:
         filter_symbol = _default_filter_symbol
-    type = get_type(src, name, api)
+    type = src.get_type(name, api)
     for x in type.required_types:
         if not filter_symbol('type', x):
             continue
@@ -297,7 +809,17 @@ def import_type(dest, src, name, api=None, filter_symbol=None):
 
 def import_command(dest, src, name, api=None, filter_symbol=None):
     """Import Command `name` and its dependencies from API `src`
-    to API `dest`"""
+    to API `dest`
+
+    :param Registry dest: Destination Registry
+    :param Registry src: Source Registry
+    :param str name: Name of Command to import
+    :param str api: Prefer to import Types with api name `api`, or None to
+                    import Types with no api name
+    :param filter_symbol: Optional filter callable
+    :type filter_symbol: Callable with signature
+                         ``(symbol_type:str, symbol_name:str) -> bool``
+    """
     if not filter_symbol:
         filter_symbol = _default_filter_symbol
     cmd = src.commands[name]
@@ -309,136 +831,113 @@ def import_command(dest, src, name, api=None, filter_symbol=None):
 
 
 def import_enum(dest, src, name):
-    """Import Enum `name` from API `src` to API `dest`."""
+    """Import Enum `name` from API `src` to API `dest`.
+
+    :param Registry dest: Destination Registry
+    :param Registry src: Source Registry
+    :param str name: Name of Enum to import
+    """
     dest.enums[name] = src.enums[name]
 
 
-def import_feature(dest, src, name, api=None, filter_symbol=None,
-                   filter_require=None):
+def import_feature(dest, src, name, api=None, profile=None,
+                   filter_symbol=None):
     """Imports Feature `name`, and all its dependencies, from
-    Registry `src` to API `dest`."""
-    if filter_symbol is None:
-        filter_symbol = _default_filter_symbol
-    if filter_require is None:
-        filter_require = _default_filter_require
-    ft = src.features[name] if isinstance(name, str) else name
-    for req in ft.requires:
-        if not filter_require(req):
-            continue
-        for x in req.types:
-            if not filter_symbol('type', x):
-                continue
-            import_type(dest, src, x, api, filter_symbol)
-        for x in req.enums:
-            if not filter_symbol('enum', x):
-                continue
-            import_enum(dest, src, x)
-        for x in req.commands:
-            if not filter_symbol('command', x):
-                continue
-            import_command(dest, src, x, api, filter_symbol)
-    if hasattr(dest, 'features'):
-        dest.features[name] = ft
+    Registry `src` to API `dest`.
 
-
-def import_extension(dest, src, name, api=None, filter_symbol=None,
-                     filter_require=None):
-    """Imports Extension `name`, and all its dependencies, from
-    Registry `src` to API `dest`."""
-    if filter_symbol is None:
-        filter_symbol = _default_filter_symbol
-    if filter_require is None:
-        filter_require = _default_filter_require
-    ext = src.extensions[name] if isinstance(name, str) else name
-    for req in ext.requires:
-        if not filter_require(req):
-            continue
-        for x in req.types:
-            if not filter_symbol('type', x):
-                continue
-            import_type(dest, src, x, api, filter_symbol)
-        for x in req.enums:
-            if not filter_symbol('enum', x):
-                continue
-            import_enum(dest, src, x)
-        for x in req.commands:
-            if not filter_symbol('command', x):
-                continue
-            import_command(dest, src, x, api, filter_symbol)
-    if hasattr(dest, 'extensions'):
-        dest.extensions[name] = ext
-
-
-def import_registry(dest, src, api=None, extension_support=None,
-                    filter_symbol=None, filter_require=None):
-    """Imports all features and extensions, and all their dependencies,
-    from Registry `src` to API `dest`."""
-    if api and not extension_support:
-        extension_support = api
-    if filter_symbol is None:
-        filter_symbol = _default_filter_symbol
-    if filter_require is None:
-        filter_require = _default_filter_require
-    for k, v in src.features.items():
-        if v.api and api and v.api != api:
-            continue
-        import_feature(dest, src, k, api, filter_symbol, filter_require)
-    for k, v in src.extensions.items():
-        if extension_support and extension_support not in v.supported:
-            continue
-        import_extension(dest, src, k, api, filter_symbol, filter_require)
-
-
-def get_requires(reg):
-    """Returns the set of Require objects in the Registry `reg`."""
-    out = set()
-    for ft in reg.features.values():
-        out.update(ft.requires)
-    for ext in reg.extensions.values():
-        out.update(ext.requires)
-    return out
-
-
-def get_removes(reg):
-    """Returns the set of Remove objects in the Registry `reg`."""
-    out = set()
-    for ft in reg.features.values():
-        out.update(ft.removes)
-    return out
-
-
-def get_profiles(reg):
-    """Returns the set of profiles defined in the Registry `reg`."""
-    out = set()
-    for req in get_requires(reg):
-        if req.profile:
-            out.add(req.profile)
-    for rem in get_removes(reg):
-        if rem.profile:
-            out.add(rem.profile)
-    return out
-
-
-def get_apis(reg):
-    """Returns the set of api names defined in the Registry `reg`."""
-    out = set()
-    for t in reg.types.values():
-        if t.api:
-            out.add(t.api)
-    for ft in reg.features.values():
-        if ft.api:
-            out.add(ft.api)
-    return out
-
-
-def get_extension_support_strings(reg):
-    """Returns the set of extension support strings defined in the
-    Registry `reg`.
+    :param Registry dest: Destination Registry
+    :param Registry src: Source Registry
+    :param str name: Name of Feature to import
+    :param str api: Prefer to import dependencies with api name `api`,
+                    or None to import dependencies with no API name.
+    :param str profile: Import dependencies with profile name
+                        `profile`, or None to import all dependencies.
+    :param filter_symbol: Optional symbol filter callable
+    :type filter_symbol: Callable with signature
+                         ``(symbol_type:str, symbol_name:str) -> bool``
     """
-    out = set()
-    for ext in reg.extensions.values():
-        out.update(ext.supported)
-    return out
+    if filter_symbol is None:
+        filter_symbol = _default_filter_symbol
+    ft = src.features[name] if isinstance(name, str) else name
+    # Gather symbols to remove from Feature
+    remove_symbols = set()
+    for x in src.get_removes(api, profile):
+        remove_symbols.update(x.as_symbols())
+
+    def my_filter_symbol(t, name):
+        return False if (t, name) in remove_symbols else filter_symbol(t, name)
+
+    for req in ft.get_requires(profile):
+        for x in req.types:
+            if not my_filter_symbol('type', x):
+                continue
+            import_type(dest, src, x, api, filter_symbol)
+        for x in req.enums:
+            if not my_filter_symbol('enum', x):
+                continue
+            import_enum(dest, src, x)
+        for x in req.commands:
+            if not my_filter_symbol('command', x):
+                continue
+            import_command(dest, src, x, api, filter_symbol)
+    dest.features[name] = ft
+
+
+def import_extension(dest, src, name, api=None, profile=None,
+                     filter_symbol=None):
+    """Imports Extension `name`, and all its dependencies.
+
+    :param Registry dest: Destination Registry
+    :param Registry src: Source Registry
+    :param str name: Name of Extension to import
+    :param str api: Prefer to import types with API name `api`,
+                or None to prefer Types with no API name.
+    :type api: str
+    :param filter_symbol: Optional symbol filter callable
+    :type filter_symbol: Callable with signature
+                         ``(symbol_type:str, symbol_name:str) -> bool``
+    """
+    if filter_symbol is None:
+        filter_symbol = _default_filter_symbol
+    ext = src.extensions[name] if isinstance(name, str) else name
+    for req in ext.get_requires(api, profile):
+        for x in req.types:
+            if not filter_symbol('type', x):
+                continue
+            import_type(dest, src, x, api, filter_symbol)
+        for x in req.enums:
+            if not filter_symbol('enum', x):
+                continue
+            import_enum(dest, src, x)
+        for x in req.commands:
+            if not filter_symbol('command', x):
+                continue
+            import_command(dest, src, x, api, filter_symbol)
+    dest.extensions[name] = ext
+
+
+def import_registry(dest, src, api=None, profile=None, support=None,
+                    filter_symbol=None):
+    """Imports all features and extensions and all their dependencies.
+
+    :param Registry dest: Destination API
+    :param Registry src: Source Registry
+    :param str api: Only import Features with API name `api`, or None
+                    to import all features.
+    :param str profile: Only import Features with profile name `profile`,
+                        or None to import all features.
+    :param str support: Only import Extensions with this extension support
+                        string, or None to import all extensions.
+    :param filter_symbol: Optional symbol filter callable
+    :type filter_symbol: Callable with signature
+                         ``(symbol_type:str, symbol_name:str) -> bool``
+    """
+    if filter_symbol is None:
+        filter_symbol = _default_filter_symbol
+    for x in src.get_features(api):
+        import_feature(dest, src, x.name, api, profile, filter_symbol)
+    for x in src.get_extensions(support):
+        import_extension(dest, src, x.name, api, profile, filter_symbol)
 
 
 def extension_name_sort_key(name):
@@ -451,81 +950,49 @@ def extension_name_sort_key(name):
     return (0, name) if category in ('ARB', 'KHR', 'OES') else (1, name)
 
 
-def generate_api(reg, features=None, extensions=None, profile=None,
-                 api=None, extension_support=None):
-    """Algorithm for generating API from Registry `reg`. Returns a list of
-    APIs.
+def group_apis(reg, features=None, extensions=None, api=None, profile=None,
+               support=None):
+    """Groups Types, Enums, Commands with their respective Features, Extensions
 
-    `features` is an iterable of feature names, or None to match all features
-    in registry `reg`.
-    `extensions` is an iterable of extension names, or None to match all
-    extensions in registry `reg`.
-    `profile` is the profile to match, or None to match all profiles.
-    `api` is the API name to match, or None to match all apis.
-    `extension_support` is the extension support string to match, or None to
-    match all extension support strings.
+    Similar to :py:func:`import_registry`, but generates a new Registry object
+    for every feature or extension.
+
+    :param Registry reg: Input registry
+    :param features: Feature names to import, or None to import all.
+    :type features: Iterable of strs
+    :param extensions: Extension names to import, or None to import all.
+    :type extensions: Iterable of strs
+    :param str profile: Import features which belong in `profile`, or None
+                        to import all.
+    :param str api: Import features which belong in `api`, or None to
+                    import all.
+    :param str support: Import extensions which belong in this extension
+                        support string, or None to import all.
+    :returns: list of :py:class:`Registry` objects
     """
-
-    if features is None:
-        features = reg.features.keys()
-    features = sorted(features)
-
-    if extensions is None:
-        extensions = reg.extensions.keys()
-    extensions = sorted(extensions, key=extension_name_sort_key)
-
-    # Collect all remove symbols in registry
-    remove_symbols = set()
-    for x in features:
-        ft = reg.features[x]
-        for rem in ft.removes:
-            if ((rem.profile and not profile) or
-               (rem.profile and profile and rem.profile != profile)):
-                continue
-            for name in rem.types:
-                remove_symbols.add(('type', name))
-            for name in rem.enums:
-                remove_symbols.add(('enum', name))
-            for name in rem.commands:
-                remove_symbols.add(('command', name))
-
-    # Build filter_symbol and filter_require
+    features = (reg.get_features(api) if features is None
+                else [reg.features[x] for x in features])
+    extensions = (reg.get_extensions(support) if extensions is None
+                  else [reg.extensions[x] for x in extensions])
     output_symbols = set()
 
     def filter_symbol(type, name):
         k = (type, name)
-        if k in output_symbols or k in remove_symbols:
+        if k in output_symbols:
             return False
         else:
             output_symbols.add(k)
             return True
 
-    def filter_require(req):
-        t1 = (req.profile == profile) if req.profile and profile else True
-        t2 = req.api == api if req.api and api else True
-        return t1 and t2
-
-    # Build APIs
     out_apis = []
-
     for x in features:
-        ft = reg.features[x]
-        if api and ft.api != api:
-            continue
-        out = API()
-        import_feature(out, reg, x, api, filter_symbol, filter_require)
-        out.name = x
+        out = Registry(x.name)
+        import_feature(out, reg, x, api, profile, filter_symbol)
         out_apis.append(out)
-
     for x in extensions:
-        out = API()
-        ext = reg.extensions[x]
-        if extension_support and extension_support not in ext.supported:
-            continue
-        import_extension(out, reg, x, api, filter_symbol, filter_require)
-        out.name = x
+        out = Registry(x.name)
+        import_extension(out, reg, x, api, profile, filter_symbol)
         out_apis.append(out)
-
     return out_apis
 
 
@@ -535,6 +1002,7 @@ def main(args=None, prog=None):
     prog = prog if prog is not None else sys.argv[0]
     # Prevent broken pipe exception from being raised.
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    stdin = sys.stdin.buffer if hasattr(sys.stdin, 'buffer') else sys.stdin
     p = argparse.ArgumentParser(prog=prog)
     p.add_argument('-o', '--output', type=argparse.FileType('w'),
                    help='Output path', default=sys.stdout)
@@ -550,49 +1018,35 @@ def main(args=None, prog=None):
     g.add_argument('--list-supports', action='store_true',
                    dest='list_supports', default=False,
                    help='List extension support strings')
-    p.add_argument('registry', type=argparse.FileType('rb'))
+    p.add_argument('registry', type=argparse.FileType('rb'), nargs='?',
+                   default=stdin, help='Registry path')
     args = p.parse_args(args)
     o = args.output
     try:
         registry = load(args.registry)
         if args.list_apis:
-            for x in sorted(get_apis(registry)):
+            for x in sorted(registry.get_apis()):
                 print(x, file=o)
             return 0
         elif args.list_profiles:
-            for x in sorted(get_profiles(registry)):
+            for x in sorted(registry.get_profiles()):
                 print(x, file=o)
             return 0
         elif args.list_supports:
-            for x in sorted(get_extension_support_strings(registry)):
+            for x in sorted(registry.get_supports()):
                 print(x, file=o)
             return 0
-        apis = generate_api(registry, profile=args.profile, api=args.api,
-                            extension_support=args.support)
+        apis = group_apis(registry, None, None, args.api, args.profile,
+                          args.support)
         for api in apis:
             print('#ifndef', api.name, file=o)
             print('#define', api.name, file=o)
-            for k, v in api.types.items():
-                print(v.template.format(name=v.name, apientry=''), file=o)
-            api_enums = sorted(api.enums.items(), key=lambda x: x[1].value)
-            for k, v in api_enums:
-                print('#define', k, v.value, file=o)
-            api_cmds = sorted(api.commands.items(), key=lambda x: x[0])
-            for k, v in api_cmds:
-                params = ', '.join(x.text for x in v.params)
-                print('extern ', v.proto_text, '(', params, ');', sep='',
-                      file=o)
-            for k, v in api_cmds:
-                params = ', '.join(x.text for x in v.params)
-                name = '(*PFN{0}PROC)'.format(k.upper())
-                print('typedef ', v.proto_template.format(name=name), '(',
-                      params, ');', sep='', file=o)
+            print(api.text, file=o)
             print('#endif', file=o)
             print('', file=o)
     except:
         e = sys.exc_info()[1]
         print(prog, ': error: ', e, sep='', file=sys.stderr)
-        raise
         return 1
     return 0
 
