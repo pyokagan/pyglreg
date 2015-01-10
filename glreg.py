@@ -987,11 +987,11 @@ def group_apis(reg, features=None, extensions=None, api=None, profile=None,
     out_apis = []
     for x in features:
         out = Registry(x.name)
-        import_feature(out, reg, x, api, profile, filter_symbol)
+        import_feature(out, reg, x.name, api, profile, filter_symbol)
         out_apis.append(out)
     for x in extensions:
         out = Registry(x.name)
-        import_extension(out, reg, x, api, profile, filter_symbol)
+        import_extension(out, reg, x.name, api, profile, filter_symbol)
         out_apis.append(out)
     return out_apis
 
