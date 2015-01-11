@@ -2,7 +2,7 @@ from setuptools import setup
 
 
 setup(name='glreg',
-      version='0.9.0a2',
+      version='0.9.0a3',
       description='OpenGL XML API registry parser',
       long_description=open('README.rst').read(),
       url='https://github.com/pyokagan/pyglreg',

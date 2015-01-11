@@ -41,7 +41,7 @@ version = '0.9'
 
 
 # Project release version
-release = '0.9.0a2'
+release = '0.9.0a3'
 
 
 # Documentation language

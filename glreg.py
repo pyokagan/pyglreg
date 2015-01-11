@@ -123,7 +123,7 @@ import signal
 import sys
 import xml.etree.ElementTree
 __author__ = 'Paul Tan <pyokagan@gmail.com>'
-__version__ = '0.9.0a2'
+__version__ = '0.9.0a3'
 __all__ = ['Type', 'Enum', 'Command', 'Param', 'Require', 'Remove', 'Feature',
            'Extension', 'Registry', 'load', 'loads', 'import_type',
            'import_command', 'import_enum', 'import_feature',
