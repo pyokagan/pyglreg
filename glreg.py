@@ -127,7 +127,7 @@ __version__ = '0.9.0a2'
 __all__ = ['Type', 'Enum', 'Command', 'Param', 'Require', 'Remove', 'Feature',
            'Extension', 'Registry', 'load', 'loads', 'import_type',
            'import_command', 'import_enum', 'import_feature',
-           'import_extension', 'import_registry', 'extension_name_sort_key',
+           'import_extension', 'import_registry', 'extension_sort_key',
            'group_apis']
 
 
@@ -948,12 +948,15 @@ def import_registry(dest, src, api=None, profile=None, support=None,
         import_extension(dest, src, x.name, api, profile, filter_symbol)
 
 
-def extension_name_sort_key(name):
-    """Returns the sorting key for an extension name.
+def extension_sort_key(extension):
+    """Returns the sorting key for an extension.
 
-    The sorting key can be used to sort a list of extension names
+    The sorting key can be used to sort a list of extensions
     into the order that is used in the Khronos C OpenGL headers.
+    :param Extension extension: Extension to produce sort key for
+    :returns: A sorting key
     """
+    name = extension.name
     category = name.split('_', 2)[1]
     return (0, name) if category in ('ARB', 'KHR', 'OES') else (1, name)
 
@@ -980,8 +983,11 @@ def group_apis(reg, features=None, extensions=None, api=None, profile=None,
     """
     features = (reg.get_features(api) if features is None
                 else [reg.features[x] for x in features])
-    extensions = (reg.get_extensions(support) if extensions is None
-                  else [reg.extensions[x] for x in extensions])
+    if extensions is None:
+        extensions = sorted(reg.get_extensions(support),
+                            key=extension_sort_key)
+    else:
+        extensions = [reg.extensions[x] for x in extensions]
     output_symbols = set()
 
     def filter_symbol(type, name):
