@@ -188,9 +188,11 @@ class Enum(object):
 
 
 class Command(object):
-    def __init__(self, name, proto_template, params, comment=None):
+    def __init__(self, name, type, proto_template, params, comment=None):
         #: Command name
         self.name = str(name)
+        #: Command return type (or None)
+        self.type = type
         #: Command identifier template string
         self.proto_template = str(proto_template)
         #: List of command Params
@@ -203,6 +205,7 @@ class Command(object):
         """Set of names of types which the Command depends on.
         """
         required_types = set(x.type for x in self.params)
+        required_types.add(self.type)
         required_types.discard(None)
         return required_types
 
@@ -212,7 +215,7 @@ class Command(object):
 
         Equivalent to ``self.proto_template.format(name=self.name)``.
         """
-        return self.proto_template.format(name=self.name)
+        return self.proto_template.format(type=self.type, name=self.name)
 
     @property
     def text(self):
@@ -224,8 +227,8 @@ class Command(object):
         return '{0} ({1});'.format(self.proto_text, params)
 
     def __repr__(self):
-        return _repr(self, (self.name, self.proto_template, self.params),
-                     (self.comment,))
+        return _repr(self, (self.name, self.type, self.proto_template,
+                     self.params), (self.comment,))
 
 
 class Param(object):
@@ -690,6 +693,8 @@ def _load_commands(root):
     def proto_text(t):
         if t.tag == 'name':
             return '{name}'
+        elif t.tag == 'ptype':
+            return '{type}'
         out = []
         if t.text:
             out.append(_escape_tpl_str(t.text))
@@ -700,11 +705,13 @@ def _load_commands(root):
         return ''.join(out)
     out = collections.OrderedDict()
     for elem in root.findall('commands/command'):
+        type_elem = elem.find('proto/ptype')
         name = elem.get('name') or elem.find('proto/name').text
+        type = type_elem.text if type_elem is not None else None
         proto_template = proto_text(elem.find('proto'))
         params = [_load_param(x) for x in elem.findall('param')]
         comment = elem.get('comment')
-        out[name] = Command(name, proto_template, params, comment)
+        out[name] = Command(name, type, proto_template, params, comment)
     return out
 
 

@@ -120,6 +120,7 @@ class TestLoadFunctions(unittest.TestCase):
         x = commands['glBufferData']
         self.assertIsInstance(x, Command)
         self.assertEqual(x.name, 'glBufferData')
+        self.assertIsNone(x.type)
         self.assertEqual(x.proto_template, 'void {name}')
         y = x.params
         self.assertIsInstance(y, list)
