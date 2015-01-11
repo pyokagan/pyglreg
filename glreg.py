@@ -224,7 +224,7 @@ class Command(object):
         This is the C declaration for the command.
         """
         params = ', '.join(x.text for x in self.params)
-        return '{0} ({1});'.format(self.proto_text, params)
+        return '{0} ({1})'.format(self.proto_text, params)
 
     def __repr__(self):
         return _repr(self, (self.name, self.type, self.proto_template,
@@ -493,7 +493,8 @@ class Registry:
         out = []
         out.extend(x.text for x in self.types.values())
         out.extend(x.text for x in self.enums.values())
-        out.extend('extern {0}'.format(x.text) for x in self.commands.values())
+        out.extend('extern {0};'.format(x.text)
+                   for x in self.commands.values())
         return '\n'.join(out)
 
     def get_type(self, name, api=None):
