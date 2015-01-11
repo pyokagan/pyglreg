@@ -38,6 +38,22 @@ Requirements
 =============
 * Python 2.7+, 3.2+
 
+Documentation
+==============
+Documentation is available at https://pyglreg.readthedocs.org/
+
+Installation
+=============
+glreg is available at `PyPI`_. Simply run the following::
+
+    # pip install --pre glreg
+
+.. _PyPI: https://pypi.python.org/pypi/glreg/
+
+Or, if you downloaded the source, run the following from the source directory::
+
+    # python setup.py install
+
 License
 ========
 MIT License
