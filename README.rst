@@ -31,8 +31,7 @@ Generate a simple OpenGL ES 2 C header:
 #ifndef GL_ES_VERSION_2_0
 #define GL_ES_VERSION_2_0
 #include <KHR/khrplatform.h>
-typedef khronos_int8_t GLbyte;
-...
+typedef khronos_int8_t GLbyte;...
 
 Requirements
 =============
@@ -53,6 +52,10 @@ glreg is available at `PyPI`_. Simply run the following::
 Or, if you downloaded the source, run the following from the source directory::
 
     # python setup.py install
+
+Development
+============
+Please report bugs and feature requests to https://github.com/pyokagan/pyglreg/
 
 License
 ========

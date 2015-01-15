@@ -14,7 +14,7 @@ Load a `Registry` object from a file using `load`:
 `Type` objects define the OpenGL types such as ``GLbyte``, ``GLint`` etc.
 
 >>> registry.types
-OrderedDict([(('stddef', None), Type(...)), ...
+OrderedDict([(('stddef', None), Type(...
 >>> registry.get_type('GLbyte')  # Get OpenGL's GLbyte typedef
 Type('GLbyte', 'typedef signed char {name};')
 >>> registry.get_type('GLbyte', 'gles2')  # Get OpenGLES2's GLbyte typedef
@@ -34,7 +34,7 @@ Enum('GL_POINTS', '0x0000')
 >>> registry.commands
 OrderedDict([('glAccum', Command(...)), ('glAccumxOES', Command(...
 >>> registry.commands['glDrawArrays']
-Command('glDrawArrays', 'void {name}', [Param('mode', 'GLenum', ...
+Command('glDrawArrays', None, 'void {name}', [Param('mode', 'GLenum', ...
 
 `Feature` objects are basically OpenGL version definitions. Each `Feature`
 object lists the type, enum and command names that were introduced
@@ -110,9 +110,7 @@ This allows you to generate a simple OpenGL (ES) C header with a simple loop:
 #ifndef GL_ES_VERSION_2_0
 #define GL_ES_VERSION_2_0
 #include <KHR/khrplatform.h>
-typedef khronos_int8_t GLbyte;
-...
-
+typedef khronos_int8_t GLbyte;...
 """
 from __future__ import print_function
 import collections
@@ -213,7 +211,8 @@ class Command(object):
     def proto_text(self):
         """Formatted Command identifier.
 
-        Equivalent to ``self.proto_template.format(name=self.name)``.
+        Equivalent to ``self.proto_template.format(type=self.type,
+        name=self.name)``.
         """
         return self.proto_template.format(type=self.type, name=self.name)
 
@@ -488,7 +487,7 @@ class Registry:
         """Formatted API declarations.
 
         Equivalent to the concatenation of `text` attributes of
-        types, enums and commands in this API.
+        types, enums and commands in this Registry.
         """
         out = []
         out.extend(x.text for x in self.types.values())
@@ -816,8 +815,8 @@ def import_type(dest, src, name, api=None, filter_symbol=None):
 
 
 def import_command(dest, src, name, api=None, filter_symbol=None):
-    """Import Command `name` and its dependencies from API `src`
-    to API `dest`
+    """Import Command `name` and its dependencies from Registry `src`
+    to Registry `dest`
 
     :param Registry dest: Destination Registry
     :param Registry src: Source Registry
@@ -839,7 +838,7 @@ def import_command(dest, src, name, api=None, filter_symbol=None):
 
 
 def import_enum(dest, src, name):
-    """Import Enum `name` from API `src` to API `dest`.
+    """Import Enum `name` from Registry `src` to Registry `dest`.
 
     :param Registry dest: Destination Registry
     :param Registry src: Source Registry
@@ -851,7 +850,7 @@ def import_enum(dest, src, name):
 def import_feature(dest, src, name, api=None, profile=None,
                    filter_symbol=None):
     """Imports Feature `name`, and all its dependencies, from
-    Registry `src` to API `dest`.
+    Registry `src` to Registry `dest`.
 
     :param Registry dest: Destination Registry
     :param Registry src: Source Registry
@@ -1018,8 +1017,9 @@ def main(args=None, prog=None):
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     stdin = sys.stdin.buffer if hasattr(sys.stdin, 'buffer') else sys.stdin
     p = argparse.ArgumentParser(prog=prog)
-    p.add_argument('-o', '--output', type=argparse.FileType('w'),
-                   help='Output path', default=sys.stdout)
+    p.add_argument('-o', '--output', metavar='PATH',
+                   type=argparse.FileType('w'), default=sys.stdout,
+                   help='Write output to PATH')
     p.add_argument('--api', help='Match API', default=None)
     p.add_argument('--profile', help='Match profile', default=None)
     p.add_argument('--support', default=None,
