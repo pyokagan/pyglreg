@@ -78,6 +78,12 @@ modindex_common_prefix = []
 keep_warnings = False
 
 
+# -- autodoc config -------------------------------------------------------
+
+
+autodoc_default_flags = []
+
+
 # -- Options for HTML output ----------------------------------------------
 
 
